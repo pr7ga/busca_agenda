@@ -11,13 +11,28 @@ st.write("Compare números do Google Forms com sua agenda e identifique os que n
 def normalize_phone(phone):
     if pd.isna(phone):
         return None
+
     phone = str(phone)
-    phone = re.sub(r"\D", "", phone)  # remove tudo que não é número
-    
-    # Remove código do Brasil (55) se existir
-    if phone.startswith("55") and len(phone) > 11:
+
+    # Remove tudo que não for número
+    phone = re.sub(r"\D", "", phone)
+
+    # Remove zeros à esquerda (ex: 083...)
+    phone = phone.lstrip("0")
+
+    # Remove código do país (55) se existir
+    if phone.startswith("55"):
         phone = phone[2:]
-    
+
+    # Agora garantimos que estamos comparando apenas DDD + número (11 dígitos)
+    # Se tiver mais que 11, mantém os últimos 11
+    if len(phone) > 11:
+        phone = phone[-11:]
+
+    # Se tiver menos de 10, provavelmente inválido
+    if len(phone) < 10:
+        return None
+
     return phone
 
 # Upload dos arquivos
