@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Comparador de Telefones", layout="wide")
+st.set_page_config(page_title="Comparador de Contatos", layout="wide")
 
-st.title("📱 Comparador de Telefones (robusto)")
-st.write("Comparação baseada no núcleo do número (evita erros com 9º dígito).")
+st.title("📱📡 Comparador de Contatos")
+st.write("Compare por telefone ou indicativo (extraído automaticamente da agenda).")
 
 # =========================
-# 🔧 LIMPEZA BÁSICA
+# 📱 TELEFONE
 # =========================
 def limpar_numero(phone):
     if pd.isna(phone):
@@ -28,14 +28,30 @@ def limpar_numero(phone):
     return phone
 
 
-# =========================
-# 🧠 EXTRAI NÚCLEO (últimos 8 dígitos)
-# =========================
 def extrair_nucleo(numero):
     if not numero:
         return None
+    return numero[-8:]
 
-    return numero[-8:]  # ESSA É A CHAVE!
+
+# =========================
+# 📡 INDICATIVO
+# =========================
+REGEX_INDICATIVO = re.compile(r"\b(PP|PU|PY|PR|PS|ZX|ZZ)[0-9][A-Z]{2,3}\b")
+
+def extrair_indicativos(texto):
+    if pd.isna(texto):
+        return []
+
+    texto = str(texto).upper()
+
+    encontrados = REGEX_INDICATIVO.findall(texto)
+
+    # ⚠️ findall retorna só o prefixo por causa do grupo
+    # então precisamos usar finditer
+    encontrados = [m.group(0) for m in REGEX_INDICATIVO.finditer(texto)]
+
+    return encontrados
 
 
 # =========================
@@ -50,111 +66,121 @@ if forms_file and contacts_file:
     df_contacts = pd.read_csv(contacts_file)
 
     st.subheader("🔍 Pré-visualização")
+    st.write("Forms:")
     st.dataframe(df_forms.head())
+
+    st.write("Agenda:")
     st.dataframe(df_contacts.head())
 
-    # Seleção de colunas
-    forms_phone_col = st.selectbox("Telefone (Forms)", df_forms.columns)
-    contacts_phone_col = st.selectbox("Telefone (Agenda)", df_contacts.columns)
+    # =========================
+    # 🎯 MODO
+    # =========================
+    modo = st.radio("Modo de comparação:", ["Telefone", "Indicativo"])
 
-    forms_indicator_col = st.selectbox(
-        "Indicativo (opcional)",
-        ["Nenhuma"] + list(df_forms.columns)
-    )
+    # =========================
+    # 📱 TELEFONE
+    # =========================
+    if modo == "Telefone":
 
-    if st.button("🚀 Comparar"):
+        forms_phone_col = st.selectbox("Telefone (Forms)", df_forms.columns)
+        contacts_phone_col = st.selectbox("Telefone (Agenda)", df_contacts.columns)
 
-        # =========================
-        # 🔄 LIMPAR
-        # =========================
-        df_forms["numero_limpo"] = df_forms[forms_phone_col].apply(limpar_numero)
-        df_contacts["numero_limpo"] = df_contacts[contacts_phone_col].apply(limpar_numero)
+        if st.button("🚀 Comparar"):
 
-        # =========================
-        # 🧠 NÚCLEO
-        # =========================
-        df_forms["nucleo"] = df_forms["numero_limpo"].apply(extrair_nucleo)
-        df_contacts["nucleo"] = df_contacts["numero_limpo"].apply(extrair_nucleo)
+            df_forms["numero_limpo"] = df_forms[forms_phone_col].apply(limpar_numero)
+            df_contacts["numero_limpo"] = df_contacts[contacts_phone_col].apply(limpar_numero)
 
-        # Conjunto da agenda
-        nucleos_agenda = set(df_contacts["nucleo"].dropna())
+            df_forms["nucleo"] = df_forms["numero_limpo"].apply(extrair_nucleo)
+            df_contacts["nucleo"] = df_contacts["numero_limpo"].apply(extrair_nucleo)
 
-        # =========================
-        # 🔍 DIAGNÓSTICO INTELIGENTE
-        # =========================
-        def diagnostico(row):
-            original = row[forms_phone_col]
-            numero = row["numero_limpo"]
-            nucleo = row["nucleo"]
+            nucleos_agenda = set(df_contacts["nucleo"].dropna())
 
-            if pd.isna(original) or original == "":
-                return "Telefone vazio"
+            def diagnostico(row):
+                numero = row["numero_limpo"]
+                nucleo = row["nucleo"]
 
-            if not numero:
-                return "Número inválido"
+                if not numero:
+                    return "Número inválido"
 
-            if not nucleo:
-                return "Número muito curto"
+                if nucleo in nucleos_agenda:
+                    return "OK"
 
-            if nucleo in nucleos_agenda:
-                # Agora detecta diferenças
-                if len(numero) == 11:
-                    return "OK (bate pelo núcleo - com 9)"
-                elif len(numero) == 10:
-                    return "OK (bate pelo núcleo - sem 9)"
-                else:
-                    return "OK (bate pelo núcleo)"
+                return "Não encontrado"
 
-            # Não bateu → tentar explicar
+            df_forms["diagnostico"] = df_forms.apply(diagnostico, axis=1)
 
-            # mesmo número com possível DDD diferente
-            for n in df_contacts["numero_limpo"].dropna():
-                if numero[-8:] == n[-8:]:
-                    return "Mesmo número, DDD diferente"
-
-            if len(numero) == 11:
-                return "Não encontrado (pode estar sem 9)"
-
-            if len(numero) == 10:
-                return "Não encontrado (pode estar com 9)"
-
-            return "Não encontrado"
-
-        df_forms["diagnostico"] = df_forms.apply(diagnostico, axis=1)
-
-        df_nao_encontrados = df_forms[
-            ~df_forms["diagnostico"].str.startswith("OK")
-        ].copy()
-
-        # =========================
-        # 📊 RESULTADO
-        # =========================
-        st.subheader("📊 Resultado")
-
-        if forms_indicator_col != "Nenhuma":
-            resultado = df_nao_encontrados[
-                [forms_indicator_col, forms_phone_col, "diagnostico"]
-            ]
-            resultado.columns = ["Indicativo", "Telefone", "Diagnóstico"]
-        else:
-            resultado = df_nao_encontrados[
+            resultado = df_forms[df_forms["diagnostico"] != "OK"][
                 [forms_phone_col, "diagnostico"]
             ]
+
             resultado.columns = ["Telefone", "Diagnóstico"]
 
-        st.write(f"Total não encontrados: {len(resultado)}")
-        st.dataframe(resultado)
+            st.write(f"Total não encontrados: {len(resultado)}")
+            st.dataframe(resultado)
 
-        # Download
-        csv = resultado.to_csv(index=False).encode("utf-8")
+            csv = resultado.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Baixar CSV", csv, "resultado_telefone.csv", "text/csv")
 
-        st.download_button(
-            "⬇️ Baixar CSV",
-            csv,
-            "resultado.csv",
-            "text/csv"
-        )
+    # =========================
+    # 📡 INDICATIVO
+    # =========================
+    else:
 
-        # Debug opcional
-        with st.expander("🔎 Debug"):
-            st.dataframe(df_forms[[forms_phone_col, "numero_limpo", "nucleo", "diagnostico"]])
+        forms_indicativo_col = st.selectbox("Indicativo (Forms)", df_forms.columns)
+
+        if st.button("🚀 Comparar"):
+
+            # Forms
+            df_forms["indicativo"] = (
+                df_forms[forms_indicativo_col]
+                .astype(str)
+                .str.upper()
+                .str.strip()
+            )
+
+            # Agenda → concatena tudo
+            df_contacts["texto"] = (
+                df_contacts["First Name"].fillna("") + " " +
+                df_contacts["Middle Name"].fillna("") + " " +
+                df_contacts["Last Name"].fillna("")
+            )
+
+            # Extrai indicativos da agenda
+            df_contacts["indicativos_extraidos"] = df_contacts["texto"].apply(extrair_indicativos)
+
+            # Cria conjunto único
+            indicativos_agenda = set()
+            for lista in df_contacts["indicativos_extraidos"]:
+                indicativos_agenda.update(lista)
+
+            # Diagnóstico
+            def diagnostico(ind):
+                if not ind or ind == "NAN":
+                    return "Indicativo vazio"
+
+                if ind in indicativos_agenda:
+                    return "OK"
+
+                # tentar explicar
+                if re.match(r".*[0-9].*", ind) is None:
+                    return "Formato inválido"
+
+                return "Não encontrado na agenda"
+
+            df_forms["diagnostico"] = df_forms["indicativo"].apply(diagnostico)
+
+            resultado = df_forms[df_forms["diagnostico"] != "OK"][
+                [forms_indicativo_col, "diagnostico"]
+            ]
+
+            resultado.columns = ["Indicativo", "Diagnóstico"]
+
+            st.write(f"Total não encontrados: {len(resultado)}")
+            st.dataframe(resultado)
+
+            csv = resultado.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Baixar CSV", csv, "resultado_indicativos.csv", "text/csv")
+
+            # 🔎 DEBUG
+            with st.expander("🔎 Indicativos extraídos da agenda"):
+                st.write(sorted(indicativos_agenda))
