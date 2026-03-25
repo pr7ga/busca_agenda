@@ -5,7 +5,7 @@ import re
 st.set_page_config(page_title="Comparador de Contatos", layout="wide")
 
 st.title("📱📡 Comparador de Contatos")
-st.write("Compare por telefone ou indicativo (extraído automaticamente da agenda).")
+st.write("Compare contatos por telefone ou indicativo (extraído automaticamente da agenda).")
 
 # =========================
 # 📱 TELEFONE
@@ -45,13 +45,7 @@ def extrair_indicativos(texto):
 
     texto = str(texto).upper()
 
-    encontrados = REGEX_INDICATIVO.findall(texto)
-
-    # ⚠️ findall retorna só o prefixo por causa do grupo
-    # então precisamos usar finditer
-    encontrados = [m.group(0) for m in REGEX_INDICATIVO.finditer(texto)]
-
-    return encontrados
+    return [m.group(0) for m in REGEX_INDICATIVO.finditer(texto)]
 
 
 # =========================
@@ -127,6 +121,7 @@ if forms_file and contacts_file:
     else:
 
         forms_indicativo_col = st.selectbox("Indicativo (Forms)", df_forms.columns)
+        forms_phone_col = st.selectbox("Telefone (Forms)", df_forms.columns)
 
         if st.button("🚀 Comparar"):
 
@@ -138,17 +133,17 @@ if forms_file and contacts_file:
                 .str.strip()
             )
 
-            # Agenda → concatena tudo
+            # Agenda → concatena campos
             df_contacts["texto"] = (
                 df_contacts["First Name"].fillna("") + " " +
                 df_contacts["Middle Name"].fillna("") + " " +
                 df_contacts["Last Name"].fillna("")
             )
 
-            # Extrai indicativos da agenda
+            # Extrair indicativos da agenda
             df_contacts["indicativos_extraidos"] = df_contacts["texto"].apply(extrair_indicativos)
 
-            # Cria conjunto único
+            # Criar conjunto único
             indicativos_agenda = set()
             for lista in df_contacts["indicativos_extraidos"]:
                 indicativos_agenda.update(lista)
@@ -161,7 +156,6 @@ if forms_file and contacts_file:
                 if ind in indicativos_agenda:
                     return "OK"
 
-                # tentar explicar
                 if re.match(r".*[0-9].*", ind) is None:
                     return "Formato inválido"
 
@@ -170,10 +164,10 @@ if forms_file and contacts_file:
             df_forms["diagnostico"] = df_forms["indicativo"].apply(diagnostico)
 
             resultado = df_forms[df_forms["diagnostico"] != "OK"][
-                [forms_indicativo_col, "diagnostico"]
+                [forms_indicativo_col, forms_phone_col, "diagnostico"]
             ]
 
-            resultado.columns = ["Indicativo", "Diagnóstico"]
+            resultado.columns = ["Indicativo", "Telefone", "Diagnóstico"]
 
             st.write(f"Total não encontrados: {len(resultado)}")
             st.dataframe(resultado)
@@ -181,6 +175,6 @@ if forms_file and contacts_file:
             csv = resultado.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Baixar CSV", csv, "resultado_indicativos.csv", "text/csv")
 
-            # 🔎 DEBUG
+            # Debug opcional
             with st.expander("🔎 Indicativos extraídos da agenda"):
                 st.write(sorted(indicativos_agenda))
